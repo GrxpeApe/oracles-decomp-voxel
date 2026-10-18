@@ -4,9 +4,10 @@
 -- from what the game keeps in work RAM bank 0: the room's tile layout, its per-tile collision
 -- values (which say which quarter-tiles are solid) and the tile Link is standing on. Solid
 -- quarter-tiles become raised voxel blocks; the "special" collision values become water (flat and
--- blue), staircases (a low step) and cliff ledges (a half-height block); and Link is a small green
--- column. Those special values were read off the real Oracle of Ages ROM: $10 is water, $18 is a
--- staircase, $19-$1b are ledge pieces. Anything else >= $10 is drawn as a low grey slab.
+-- blue), bridges (flat and tan) and staircases (a low step); and Link is a small green column.
+-- Those special values were read off the real ROMs by looking at what the game draws on them.
+-- Both games: $10 is water. Ages: $18 is a staircase, $19-$1b are bridge planks. Seasons: $1a and
+-- $1b are bridge planks. Anything else >= $10 is drawn as a low grey slab.
 --
 -- On a build with oracles.rd_bank1 (this fork) Link is placed at his real pixel position and lifts
 -- off the ground when he jumps. On a build without it he is snapped to his tile instead. Enemies,
@@ -48,9 +49,14 @@ local WALL_S  = rgb(9, 8, 8)                                              -- sha
 -- h is given as a function of the quarter size S so the corner map and full view both scale.
 local WATER  = { top = rgb(5, 15, 28),  front = rgb(2, 8, 18),   h = function(S) return 0 end }
 local STAIRS = { top = rgb(28, 10, 8),  front = rgb(16, 4, 4),   h = function(S) return S // 2 end }
-local LEDGE  = { top = rgb(26, 16, 15), front = rgb(15, 8, 8),   h = function(S) return S end }
+local BRIDGE = { top = rgb(24, 18, 9),  front = rgb(14, 9, 4),   h = function(S) return 0 end }
 local OTHER  = { top = rgb(14, 13, 18), front = rgb(8, 7, 11),   h = function(S) return S // 2 end }
-local SPECIAL = { [0x10] = WATER, [0x18] = STAIRS, [0x19] = LEDGE, [0x1a] = LEDGE, [0x1b] = LEDGE }
+-- The two games share the water value but not the rest, so each has its own table. Both were read
+-- off the real ROMs by looking at what the game draws on those tiles; values not listed here (a
+-- lot of Seasons' are mixed half-and-half tiles) are drawn as the neutral OTHER slab.
+local SPECIAL = seasons
+  and { [0x10] = WATER, [0x1a] = BRIDGE, [0x1b] = BRIDGE }
+  or  { [0x10] = WATER, [0x18] = STAIRS, [0x19] = BRIDGE, [0x1a] = BRIDGE, [0x1b] = BRIDGE }
 local TUNIC, SKIN, CAP = rgb(4, 22, 5), rgb(31, 24, 18), rgb(3, 15, 4)
 
 -- ---------------------------------------------------------------------------------------------
