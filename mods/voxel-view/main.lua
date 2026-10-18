@@ -3,8 +3,10 @@
 -- A mod can read the game's memory and draw rectangles, nothing more, so this builds the diorama
 -- from what the game keeps in work RAM bank 0: the room's tile layout, its per-tile collision
 -- values (which say which quarter-tiles are solid) and the tile Link is standing on. Solid
--- quarter-tiles become raised voxel blocks, "special" collision tiles (water, holes, ledges...)
--- become low slabs, and Link is a small green column.
+-- quarter-tiles become raised voxel blocks; the "special" collision values become water (flat and
+-- blue), staircases (a low step) and cliff ledges (a half-height block); and Link is a small green
+-- column. Those special values were read off the real Oracle of Ages ROM: $10 is water, $18 is a
+-- staircase, $19-$1b are ledge pieces. Anything else >= $10 is drawn as a low grey slab.
 --
 -- On a build with oracles.rd_bank1 (this fork) Link is placed at his real pixel position and lifts
 -- off the ground when he jumps. On a build without it he is snapped to his tile instead. Enemies,
@@ -14,6 +16,8 @@
 -- 0 = off, 1 = corner map (default, game stays fully playable), 2 = full-screen replacement of the
 -- playfield. There is no settings menu yet (see MODDING.md), so change this line to switch.
 local DEFAULT_VIEW = 1
+
+local STATUS_BAR = 16        -- rows taken by the status bar, above the playfield
 
 local view = oracles.setting("Voxel view", {0, 2, DEFAULT_VIEW})
 local show_link = oracles.setting("Show Link", true)
@@ -26,7 +30,8 @@ local LAYOUT   = 0xcf00                          -- wRoomLayout, one tile id per
 local TILEPOS  = seasons and 0xccb3 or 0xcc99    -- wActiveTilePos: Link's tile, (row << 4) | col
 local CAM_Y    = seasons and 0xffa8 or 0xffaa    -- hCameraY
 local CAM_X    = seasons and 0xffaa or 0xffac    -- hCameraX
-local IS_LARGE = seasons and 0xcc4a or 0xcc2e    -- wRoomIsLarge
+local ROOM_W   = 0xcd0a                          -- wRoomWidth,  in 8-pixel tiles (20 or 30); same in both games
+local ROOM_H   = 0xcd0b                          -- wRoomHeight, in 8-pixel tiles (16 or 22)
 
 -- ---------------------------------------------------------------------------------------------
 -- Colours (RGB555, red lowest).
@@ -38,8 +43,14 @@ local FLOOR   = { rgb(9, 18, 8), rgb(11, 20, 9), rgb(8, 16, 10) }
 local WALL_T  = { rgb(25, 23, 20), rgb(23, 21, 18), rgb(27, 25, 22) }   -- top faces
 local WALL_F  = { rgb(14, 12, 11), rgb(13, 11, 10), rgb(15, 13, 12) }   -- front faces
 local WALL_S  = rgb(9, 8, 8)                                              -- shaded right edge
-local SLAB_T  = { rgb(5, 14, 27), rgb(24, 12, 4), rgb(18, 8, 24), rgb(8, 24, 20) }
-local SLAB_F  = { rgb(2, 7, 16), rgb(14, 6, 2), rgb(10, 4, 14), rgb(4, 14, 12) }
+
+-- How each special collision value is drawn: top colour, front colour and height (0 = flat).
+-- h is given as a function of the quarter size S so the corner map and full view both scale.
+local WATER  = { top = rgb(5, 15, 28),  front = rgb(2, 8, 18),   h = function(S) return 0 end }
+local STAIRS = { top = rgb(28, 10, 8),  front = rgb(16, 4, 4),   h = function(S) return S // 2 end }
+local LEDGE  = { top = rgb(26, 16, 15), front = rgb(15, 8, 8),   h = function(S) return S end }
+local OTHER  = { top = rgb(14, 13, 18), front = rgb(8, 7, 11),   h = function(S) return S // 2 end }
+local SPECIAL = { [0x10] = WATER, [0x18] = STAIRS, [0x19] = LEDGE, [0x1a] = LEDGE, [0x1b] = LEDGE }
 local TUNIC, SKIN, CAP = rgb(4, 22, 5), rgb(31, 24, 18), rgb(3, 15, 4)
 
 -- ---------------------------------------------------------------------------------------------
@@ -64,23 +75,26 @@ end
 local function render(ox, oy, S, tx0, ty0, ntx, nty, sx, sy, lpx, lpy, lz)
   local T    = S * 2
   local WH   = S * 3 // 2          -- wall height in pixels
-  local SH   = S // 2              -- slab height
-  local ids, cv, qh = {}, {}, { {}, {} }   -- tile ids, collision bytes, quarter heights (0 floor, 1 slab, 2 wall)
-  local txe  = math.min(tx0 + ntx - 1, 15)
+  local ids, qh = {}, { {}, {} }   -- tile ids; per quarter: false = floor, true = wall, or a SPECIAL kind
+  local rw   = math.min(oracles.rd(ROOM_W) // 2, 15)       -- the room's size in 16-pixel tiles
+  local rh   = math.min(oracles.rd(ROOM_H) // 2, 11)
+  local txe  = math.min(tx0 + ntx - 1, rw - 1)
   local tys  = math.max(ty0, 0)
-  local tye  = math.min(ty0 + nty - 1, 10)
+  local tye  = math.min(ty0 + nty - 1, rh - 1)
   local lrow = lpx and math.max(tys, math.min(tye, (lpy + 6) // 16))   -- the tile row his feet are in
 
   for ty = tys, tye do
     local base = ty * 16
     for tx = tx0, txe do
       local v = oracles.rd(COLL + base + tx)
-      cv[tx], ids[tx] = v, oracles.rd(LAYOUT + base + tx)
+      ids[tx] = oracles.rd(LAYOUT + base + tx)
+      -- Values below $10 are four solid/not-solid bits, one per quarter of the tile. The game's own
+      -- lookup (_simpleCollision) reads bit 3 for the top-left quarter, bit 2 top-right, bit 1
+      -- bottom-left and bit 0 bottom-right, so quarter q (row * 2 + column) is bit 3 - q.
       for q = 0, 3 do
         local h
-        if v >= 16 then h = 1
-        elseif (v >> q) & 1 == 1 then h = 2
-        else h = 0 end
+        if v >= 16 then h = SPECIAL[v] or OTHER
+        else h = ((v >> (3 - q)) & 1) == 1 end
         qh[(q >> 1) + 1][tx * 2 + (q & 1)] = h
       end
     end
@@ -95,17 +109,17 @@ local function render(ox, oy, S, tx0, ty0, ntx, nty, sx, sy, lpx, lpy, lz)
         local id = ids[tx]
         local h  = row[qx]
         rect(gx, gy, S, S, FLOOR[id % 3 + 1])            -- the ground under every quarter
-        if h == 2 then
+        if h == true then
           local k = id % 3 + 1
           rect(gx, gy - WH, S, S, WALL_T[k])             -- top face
           rect(gx, gy - WH + S, S, WH, WALL_F[k])        -- front face
-          if S >= 4 and row[qx + 1] ~= 2 then            -- shaded edge where the block ends
+          if S >= 4 and row[qx + 1] ~= true then         -- shaded edge where the block ends
             rect(gx + S - S // 4, gy - WH, S // 4, S + WH, WALL_S)
           end
-        elseif h == 1 then
-          local k = cv[tx] % 4 + 1
-          rect(gx, gy - SH, S, S, SLAB_T[k])
-          rect(gx, gy - SH + S, S, SH, SLAB_F[k])
+        elseif h then
+          local sh = h.h(S)
+          rect(gx, gy - sh, S, S, h.top)
+          if sh > 0 then rect(gx, gy - sh + S, S, sh, h.front) end
         end
       end
     end
@@ -140,24 +154,26 @@ oracles.on_frame(function()
   end
 
   if mode == 1 then
-    -- Corner map: the whole room at 2 pixels per quarter, on a dark plate, top-right of the picture.
+    -- Corner map: the whole room at 2 pixels per quarter, on a dark plate, top-right of the
+    -- playfield (just under the status bar, which takes the top 16 rows).
     local S = 2
-    local large = oracles.rd(IS_LARGE) ~= 0
-    local ntx, nty = large and 15 or 10, large and 11 or 8
+    local ntx = math.min(oracles.rd(ROOM_W) // 2, 15)
+    local nty = math.min(oracles.rd(ROOM_H) // 2, 11)
+    if ntx == 0 or nty == 0 then return end              -- no room loaded yet
     local w, h = ntx * S * 2, nty * S * 2 + S * 3 // 2
-    local px = oracles.screen() - w - 5
+    local px, py = oracles.screen() - w - 5, STATUS_BAR + 2
     cx0, cy0, cx1, cy1 = 0, 0, oracles.screen(), 144
-    rect(px - 2, 1, w + 4, h + 4, PLATE_E)
-    rect(px - 1, 2, w + 2, h + 2, PLATE)
-    cx0, cy0, cx1, cy1 = px, 3, px + w, 3 + h
-    render(px, 3 + S * 3 // 2, S, 0, 0, ntx, nty, 0, 0, lpx, lpy, lz)
+    rect(px - 2, py - 1, w + 4, h + 4, PLATE_E)
+    rect(px - 1, py, w + 2, h + 2, PLATE)
+    cx0, cy0, cx1, cy1 = px, py + 1, px + w, py + 1 + h
+    render(px, py + 1 + S * 3 // 2, S, 0, 0, ntx, nty, 0, 0, lpx, lpy, lz)
   else
-    -- Full view: the playfield (160x128, above the status bar) redrawn at 8 pixels per quarter,
+    -- Full view: the playfield (160x128, below the status bar) redrawn at 8 pixels per quarter,
     -- scrolled with the game's own camera, centred when widescreen is on.
     local ox = (oracles.screen() - 160) // 2
-    cx0, cy0, cx1, cy1 = ox, 0, ox + 160, 128
+    cx0, cy0, cx1, cy1 = ox, STATUS_BAR, ox + 160, 144
     local camx, camy = oracles.rd(CAM_X), oracles.rd(CAM_Y)
-    render(ox, 0, 8, camx // 16, camy // 16, 11, 9, camx % 16, camy % 16, lpx, lpy, lz)
+    render(ox, STATUS_BAR, 8, camx // 16, camy // 16, 11, 9, camx % 16, camy % 16, lpx, lpy, lz)
   end
 end)
 
