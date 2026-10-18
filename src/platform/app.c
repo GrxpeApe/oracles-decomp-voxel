@@ -757,7 +757,7 @@ static void present_game(SDL_Renderer *ren, SDL_Texture *tex, const GBSample *sa
   // returns through present() before ever reaching wide_render, so a mod would never run for the
   // (common) non-widescreen case if this were placed after it instead.
   ModsFrame mf = {sample->wram[0], sample->hram, seasons, settings.widescreen ? WIDE_W : FB_W,
-                  rd_room(sample, seasons), rom, rom_size, &mod_font};
+                  rd_room(sample, seasons), rom, rom_size, &mod_font, sample->wram[1]};
   mods_frame(&mf);
   const ModOverlay *ov = mods_overlay();
 

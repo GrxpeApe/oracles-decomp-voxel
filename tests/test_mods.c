@@ -3175,6 +3175,37 @@ static void rd_outside_the_known_windows_reads_as_zero(void) {
   mods_shutdown();
 }
 
+// oracles.rd_bank1 reads $d000..$dfff from the frame's bank-1 buffer -- and only that range: the
+// other windows read 0 (they are oracles.rd's), and a frame with no bank 1 reads 0 rather than
+// crashing on a NULL.
+static void rd_bank1_reads_the_object_bank_and_nothing_else(void) {
+  clear_mods();
+  const char *root = make_mod("rdbank1", "id=rdbank1\napi=1\ngames=ages,seasons\n",
+      "oracles.on_frame(function()\n"
+      "  oracles.log('y=' .. oracles.rd_bank1(0xd00b) .. ' x=' .. oracles.rd_bank1(0xd00d)\n"
+      "    .. ' last=' .. oracles.rd_bank1(0xdfff) .. ' c=' .. oracles.rd_bank1(0xc000)\n"
+      "    .. ' lo=' .. oracles.rd_bank1(0xcfff) .. ' hi=' .. oracles.rd_bank1(0xe000))\n"
+      "end)\n");
+  ASSERT(mods_init(root, true));
+  static uint8_t wram[0x1000], hram[127], bank1[0x1000];
+  memset(wram, 0xff, sizeof wram);      // must never be returned through rd_bank1
+  bank1[0x00b] = 72; bank1[0x00d] = 88; bank1[0xfff] = 9;
+  ModsFrame f = { .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1, .wram1 = bank1 };
+  mods_frame(&f);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "y=72 x=88 last=9 c=0 lo=0 hi=0") != NULL);
+
+  // No bank 1 this frame (launcher, or a test that does not supply one): zeroes, still enabled.
+  mods_api_clear_log();
+  ModsFrame g = { .wram = wram, .hram = hram, .seasons = true, .width = 160, .room = 1 };
+  mods_frame(&g);
+  ASSERT(mods_enabled(0));
+  ASSERT(mods_last_log());
+  ASSERT(strstr(mods_last_log(), "y=0 x=0 last=0") != NULL);
+  mods_shutdown();
+}
+
 // Correction: a handler must not be reachable by a mod setting a plain Lua global itself (the
 // plan's own sketch used lua_setglobal(L, "__on_frame")) -- that is also a global a mod could
 // set directly, bypassing oracles.on_frame entirely. Pinning the negative: a mod that assigns
@@ -4031,6 +4062,7 @@ int main(void) {
   RUN(draw_rect_clamps_rather_than_wrapping_a_huge_width);
   RUN(draw_text_truncates_at_an_embedded_nul);
   RUN(rd_outside_the_known_windows_reads_as_zero);
+  RUN(rd_bank1_reads_the_object_bank_and_nothing_else);
   RUN(a_bare_global_assignment_never_runs_as_a_handler);
   RUN(re_registering_on_frame_replaces_the_previous_handler);
   RUN(on_room_change_is_skipped_when_never_registered);

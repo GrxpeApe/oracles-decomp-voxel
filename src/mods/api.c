@@ -97,6 +97,20 @@ static int l_rd(lua_State *L) {
   return 1;
 }
 
+// $d000..$dfff of WRAM bank 1 -- where Link and the game's other objects live (Link's own
+// slot is $d000, with his Y/X in pixels at $d00b/$d00d). A separate function rather than a wider
+// oracles.rd so that oracles.rd keeps meaning exactly what MODDING.md has always said it means:
+// a mod that read $d000 through rd got a 0 and still does. Anything outside the bank, or a frame
+// with no bank 1, reads back 0 -- the same silent-zero rule as rd.
+static int l_rd_bank1(lua_State *L) {
+  int addr = check_int(L, 1);
+  const ModsFrame *f = mods_current_frame();
+  int v = 0;
+  if (addr >= 0xd000 && addr <= 0xdfff && f->wram1) v = f->wram1[addr - 0xd000];
+  lua_pushinteger(L, v);
+  return 1;
+}
+
 static int l_draw_rect(lua_State *L) {
   overlay_rect(mods_overlay_mut(), check_int(L, 1), check_int(L, 2), check_int(L, 3),
                check_int(L, 4), check_int(L, 5));
@@ -285,6 +299,7 @@ static const luaL_Reg api[] = {
   {"on_frame", l_on_frame},
   {"on_room_change", l_on_room_change},
   {"rd", l_rd},
+  {"rd_bank1", l_rd_bank1},
   {"screen", l_screen},
   {"setting", l_setting},
   {"store", l_store},

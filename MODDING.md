@@ -132,7 +132,7 @@ Every pixel you draw is opaque; there is no blending. Where you draw nothing, th
 
 ## API reference
 
-Everything a mod can call lives in the `oracles` table. This is the whole of it — twelve functions.
+Everything a mod can call lives in the `oracles` table. This is the whole of it — thirteen functions.
 Anything not listed here does not exist (and a test fails the build if this list and the real one
 ever disagree).
 
@@ -246,14 +246,31 @@ local essences = oracles.rd(oracles.game() == "seasons" and 0xc6bb or 0xc6bf)
 ```
 
 **Only two windows are readable:** `$c000`-`$cfff` (work RAM bank 0) and `$ff80`-`$fffe` (high RAM).
-Anything else — including the switchable work RAM bank at `$d000`-`$dfff`, which this build does not
-expose at all — **reads back 0** instead of raising an error. A plausible-looking `$d1xx` address
+Anything else **reads back 0** instead of raising an error. The switchable work RAM bank at
+`$d000`-`$dfff`, where Link and the other objects live, has its own function,
+[`oracles.rd_bank1`](#oraclesrd_bank1addr). A plausible-looking `$d1xx` address
 gives you a silent zero, not a complaint, so if a value is stubbornly 0 check the address is in range
 before suspecting your arithmetic.
 
 Addresses are the game's own, and nearly all of them differ between Ages and Seasons — so read them
 through `oracles.game()`, as above. The community Oracle of Ages/Seasons disassembly is where the
 names and addresses on this page come from.
+
+### `oracles.rd_bank1(addr)`
+
+Reads one byte of work RAM **bank 1**, `$d000`-`$dfff`, and returns it as an integer 0-255. This is
+where Link and the game's other objects are kept: Link's slot starts at `$d000`, with his Y and X
+position in pixels at `$d00b` and `$d00d`. Anything outside that range reads back 0, as with
+`oracles.rd`.
+
+```lua
+local link_y, link_x = oracles.rd_bank1(0xd00b), oracles.rd_bank1(0xd00d)
+```
+
+This is the same address-based contract as `oracles.rd`: the addresses belong to the game, not to
+this port. It is a separate function rather than a wider `oracles.rd` so that `oracles.rd` keeps
+meaning what it always has. A build that predates this function has no `oracles.rd_bank1`, so a mod
+that wants to run on both should check `if oracles.rd_bank1 then` first.
 
 ### `oracles.screen()`
 
@@ -307,7 +324,7 @@ in `pcall`. If you are storing something a player typed or a value from the game
 
 ## Stable and unstable
 
-The twelve functions above are the **stable core**, and the reason they can promise that is worth
+The thirteen functions above are the **stable core**, and the reason they can promise that is worth
 understanding, because it explains why some obvious-looking additions are not there.
 
 `oracles.rd` takes a **raw address**. Addresses are a property of the game — they are fixed by the
@@ -408,8 +425,9 @@ accident. It is left unfixed on purpose for now, because the alternative is mach
 concrete reason for the advice above: **install mods only from sources you trust.**
 
 **`oracles.rd` sees two windows, not all of memory.** `$c000`-`$cfff` and `$ff80`-`$fffe`. The
-switchable bank at `$d000`-`$dfff` is not exposed, and an address outside both windows reads 0
-rather than raising an error. See `oracles.rd` above.
+switchable bank at `$d000`-`$dfff` is read with `oracles.rd_bank1` instead, and other work RAM banks
+are not exposed at all. An address outside a function's window reads 0 rather than raising an error.
+See `oracles.rd` above.
 
 **Numbers are clamped, not wrapped.** Lua integers are 64-bit, the drawing functions take 32-bit
 ones. Pass `4294967301` as a width and you get a very wide rectangle (clipped to the screen), not the

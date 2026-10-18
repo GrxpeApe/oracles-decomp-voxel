@@ -152,6 +152,7 @@ typedef struct {
   const uint8_t *rom;           // for draw_icon; may be NULL
   size_t rom_size;
   const UiFont *font;           // for draw_text; may be NULL
+  const uint8_t *wram1;         // $d000..$dfff (WRAM bank 1: Link and the other objects), 4096 bytes, or NULL
 } ModsFrame;
 
 // Runs every enabled mod's on_frame handler, then (when f->room has changed since the last call)
